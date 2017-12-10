@@ -1,0 +1,164 @@
+; Jesus Hernandez
+; Project4
+; Shared Memory
+$JOB NAME="Project4"
+$STACK
+$DATA
+; Service request number definitions
+D_NOP    EQU    0    ; Do No Operation
+T_JOB    EQU    1    ; Terminate JOB
+S_PEH    EQU    5    ; Set Process Error Handler
+C_THD    EQU    7    ; Create Thread
+G_ATC    EQU    8    ; Get Active Thread Count
+R_INT    EQU   50    ; Read Integer from Terminal
+W_INT    EQU   51    ; Write Integer from Terminal
+W_STR    EQU   55    ; Write String to Terminal
+
+; Service request return code definitions
+R_EOF    EQU   -1    ; Terminal Input EOF
+R_OK     EQU    0    ; No error occurred
+
+; Project definitions
+L_BUF    EQU   20    ; Buffer size
+S_BUF    VAR   20    ; Buffer size
+V_IN     CON    0    ; Value In (Initial = 0)
+V_OUT    CON    0    ; Value Out (Initial = 0)
+I_IN     CON    0    ; In Index (Initial = 0)
+I_OUT    CON    0    ; Out Index (Initial = 0)
+N_RUN    CON   15    ; Number of runs
+N_IN     CON    0    ; Number of input runs (producer)
+N_OUT    CON    1    ; Number of output runs (consumer)
+V_NUM    CON    1    ; Value Number (Initial 1 --> 15)
+CFLAG    CON    0    ; Done Flag Consumer
+PFLAG    CON    0    ; Done Flag Producer
+DFLAG    CON    0    ; Done Flag
+
+; Thread job definitions
+C_TPB    EQU    *    ; Consumer Thread PB
+C_TPC    VAR         ; Consumer Thread PC
+C_TNM    CON   "CON" ; Consumer Thread Name
+P_TPB    EQU    *    ; Producer Thread PB
+P_TPC    VAR         ; Producer Thread PC
+P_TNM    CON   "PRD" ; Producer Thread Name
+
+$CODE
+; Create consumer thread
+MAIN     LDRM   R1,CONS    ; Consumer Thread Entry Point (CON) -> R1
+         STR    R1,C_TPC   ; C_TPC = CON
+         LDRM   R15,C_TPB  ; C_TPB -> R15
+         SVC    C_THD
+; Create producer thread
+         LDRM   R1,PROD    ; Producer Thread Entry Point (PRD) -> R1
+         STR    R1,P_TPC   ; P_TPC = PRD
+         LDRM   R15,P_TPB  ; P_TPB -> R15
+         SVC    C_THD
+; Wait until all child threads terminate before terminating self
+; DO
+;    Get active thread count
+; WHILE ( active thread count > 0 )
+DO       SVC    G_ATC
+         JMPP   R15,DO
+
+; Terminate job
+         SVC    T_JOB
+
+;--------------------------------------------------
+; Thread Entry Consumer
+;--------------------------------------------------
+; while(1) {
+;    while(I_IN == I_OUT) {
+;        D_NOP();
+;    }
+;    nextConsumed = S_BUF[I_OUT];
+;    I_OUT = (I_IN + 1) % L_BUF;
+; }
+;--------------------------------------------------
+
+CONS     LDR    R1,N_RUN
+         LDR    R2,N_OUT
+         SUBR   R1,R2        ; Check to see if we consumed 15 numbers
+         JMPNZ  R2,NFLAG     ; If not, continue
+         LDR    R2,CFLAG     ; if so, trip flag
+         INCR   R2
+         STR    R2,CFLAG
+NFLAG    LDR    R1,PFLAG     ; If PFLAG is tripped
+         LDR    R2,CFLAG     ; & If CFLAG is tripped
+         ANDR   R1,R2
+         JMPNZ  R2,END       ; We are done
+         LDR    R1,I_IN
+         LDR    R2,I_OUT
+         XORR   R1,R2        ; If I_OUT (XORR) I_IN == 0, then I_OUT == I_IN
+         JMPNZ  R2,CONSUME   ; IF I_OUT != I_IN, Continue
+         SVC    D_NOP        ; If I_OUT == I_IN, NOP
+         JMP    CONS
+CONSUME  LDRM   R1,S_BUF     ; Address of S_BUF
+         LDR    R2,I_OUT     ; Index Out
+         ADDR   R2,R1        ; (R1)S_BUF = (R1)S_BUF + (R2)Offset of I_OUT
+         LDRN   R15,R1       ; Load R15 from data segment address in R2
+         SVC    W_INT
+         INCR   R2           ; INCR R2 twice for word
+         INCR   R2
+         STR    R2,I_OUT     ; Index Out incremented to new value
+         LDRM   R3,L_BUF
+         ; If negative, then I_OUT > L_BUF. Easier than SUBR R2,R3, then
+         ; making duplicate code due to needing the same action for both
+         ; situations
+         SUBR   R3,R2        ; R2 = I_OUT - L_BUF (Checks if I_OUT > L_BUFF)
+         JMPN   R2,CONTC     ; Basically JMPGE R2,R3,CONT
+         ZEROR  R4           ; Loops I_OUT back around after we reach the buffer end
+         STR    R4,I_OUT     ; Update I_OUT
+CONTC    LDR    R1,N_OUT     ; Increment N_OUT
+         INCR   R1
+         STR    R1,N_OUT
+         JMP    CONS
+END      SVC    T_JOB
+
+;--------------------------------------------------
+; Thread Entry Producer
+;--------------------------------------------------
+; while(1) {
+;    while(((I_IN + 1) % L_BUF) == I_OUT) {
+;        D_NOP();
+;    }
+;    S_BUF[I_IN] = nextProduced;
+;    I_IN = (I_IN + 1) % L_BUF;
+; }
+;--------------------------------------------------
+PROD     LDR    R1,N_IN
+         JMPZ   R1,PRODUCE
+         LDR    R2,N_RUN
+         SUBR   R1,R2        ; If less than or equal to 15 produced numbers
+         JMPNZ  R2,MOD       ; Continue
+         LDR    R1,PFLAG     ; Else, trip flag once done
+         INCR   R1
+         STR    R1,PFLAG
+         SVC    T_JOB        ; And we're done
+
+MOD      LDR    R1,I_IN      ; Index In
+         LDRM   R2,L_BUF
+         SUBR   R1,R2        ; R2 = L_BUF - I_IN (Checks if I_IN > L_BUF)
+         JMPP   R2,CONTP     ; Basically JMPG R1,R2,CONT
+         JMPZ   R2,CONTP
+         ZEROR  R1           ; Loops I_IN back around as with the CONSUMER
+CONTP    STR    R1,I_IN      ; Update I_IN
+         LDR    R2,I_OUT
+         XORR   R1,R2        ; If I_IN+1 (XORR) I_OUT == 0, then I_IN+1 == I_OUT
+         JMPNZ  R2,PRODUCE   ; IF I_IN + 1 != I_OUT, Continue
+         SVC    D_NOP        ; If I_IN == I_OUT, NOP
+         JMP    PROD
+PRODUCE  LDR    R1,I_IN      ; Index In
+         LDRM   R2,S_BUF     ; Address of S_BUF
+         LDR    R3,V_NUM     ; Value of Number
+         ADDR   R1,R2        ; R2 = S_BUF + Offset (I_IN)
+         STRN   R3,R2        ; Store R3 into data segment at R2
+         INCR   R3           ; Number++
+         STR    R3,V_NUM     ; Update number value
+         LDR    R4,N_IN      ; R4 = Number of produced integers
+         INCR   R4           ; INCR Number of produced integers
+         STR    R4,N_IN      ; Update Number of produced integers
+         INCR   R1           ; Update Index
+         INCR   R1
+         STR    R1,I_IN
+         JMP    PROD
+$ENDJOB
+$EOF

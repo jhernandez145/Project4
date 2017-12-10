@@ -1,0 +1,359 @@
+; Jesus Hernandez
+; Project4
+; Disk Access
+$JOB NAME="Project4"
+$STACK
+$DATA
+; Service request number definitions
+D_NOP    EQU    0    ; Do No Operation
+T_JOB    EQU    1    ; Terminate JOB
+S_PEH    EQU    5    ; Set Process Error Handler
+C_THD    EQU    7    ; Create Thread
+G_ATC    EQU    8    ; Get Active Thread Count
+R_INT    EQU   50    ; Read Integer from Terminal
+W_INT    EQU   51    ; Write Integer from Terminal
+W_STR    EQU   55    ; Write String to Terminal
+R_DSK    EQU   60    ; Read Disk Sector
+W_DSK    EQU   61    ; Write Disk Sector
+
+; Service request return code definitions
+R_EOF    EQU   -1    ; Terminal Input EOF
+R_OK     EQU    0    ; No error occurred
+
+; Project definitions
+L_BUF    EQU   20    ; Buffer size = 20 = 10 integers
+S_BUF    VAR   20    ; Buffer size = 20 = 10 integers
+V_IN     CON    0    ; Value In (initial = 0)
+V_OUT    CON    0    ; Value Out (Initial = 0)
+I_IN     CON    0    ; In Index
+I_OUT    CON    0    ; Out Index
+N_RUN    CON   15    ; Number of runs
+N_IN     CON    0    ; Number of input runs (producer)
+N_OUT    CON    1    ; Number of output runs (consumer)
+V_NUM    CON    1    ; Value Number (Initial 1 --> 15)
+CFLAG    CON    0    ; Done Flag Consumer
+PFLAG    CON    0    ; Done Flag Producer
+
+; Thread job definitions
+C_TPB    EQU    *    ; Consumer Thread PB
+C_TPC    VAR         ; Consumer Thread PC
+C_TNM    CON   "CON" ; Consumer Thread Name
+P_TPB    EQU    *    ; Producer Thread PB
+P_TPC    VAR         ; Producer Thread PC
+P_TNM    CON   "PRD" ; Producer Thread Name
+
+; DISK ACCESS PARAM BLOCK
+D_APB    EQU    *    ; Disk Access Parameter Block
+S_ADR    VAR         ; Sector Address
+B_ADR    VAR         ; Buffer Address
+D_BUF    VAR   64    ; Disk Buffer
+
+D_REC    CON    "123456789012345"    ; 16W = 32B
+         CON    "123456789012345"    ;     .
+         CON    "123456789012345"    ;     .
+         CON    "123456789012345"    ;     .
+                                     ; TOTAL = 64W = 128B
+; RESERVED SECTORS:
+; SECTOR 0 == I_OUT
+; SECTOR 1 == I_IN
+; SECTOR 2 == N_OUT
+; SECTOR 3 == N_IN
+; SECTOR 4 == N_RUN
+; SECTOR 5 == CFLAG
+; SECTOR 6 == PFLAG
+; SECTOR 7 == START BUFFER
+
+
+
+$CODE
+; Create consumer thread
+MAIN     LDRM   R1,CONS    ; Consumer Thread Entry Point (CON) -> R1
+         STR    R1,C_TPC  ; C_TPC = CON
+         LDRM   R15,C_TPB ; C_TPB -> R15
+         SVC    C_THD
+; Create producer thread
+         LDRM   R1,PROD    ; Producer Thread Entry Point (PRD) -> R1
+         STR    R1,P_TPC  ; P_TPC = PRD
+         LDRM   R15,P_TPB ; P_TPB -> R15
+         SVC    C_THD
+; Wait until all child threads terminate before terminating self
+; DO
+;    Get active thread count
+; WHILE ( active thread count > 0 )
+DO       SVC    G_ATC
+         JMPP   R15,DO
+
+; Terminate job
+         SVC    T_JOB
+
+;--------------------------------------------------
+; Thread Entry Consumer
+;--------------------------------------------------
+; while(1) {
+;    while(I_IN == I_OUT) {
+;        D_NOP();
+;    }
+;    nextConsumed = S_BUF[I_OUT];
+;    I_OUT = (I_IN + 1) % L_BUF;
+; }
+;--------------------------------------------------
+
+
+CONS     LDRM   R1,2        ; N_OUT
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = N_OUT
+         MVR    R15,R3
+
+         LDRM   R1,4        ; N_RUN
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = N_RUN
+         MVR    R15,R4
+
+         LDRM   R1,0        ; I_OUT
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = I_OUT
+         MVR    R15,R2
+
+         LDRM   R1,5        ; CFLAG
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = CFLAG
+         MVR    R15,R5
+
+         LDRM   R1,6        ; PFLAG
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = PFLAG
+         MVR    R15,R6
+
+         LDRM   R1,1        ; I_IN
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = I_IN
+         MVR    R15,R1
+
+         ; R1 == I_IN ,,, R2 == I_OUT ,,, R3 == N_OUT ,,, R4 == N_RUN
+         ; R5 == CFLAG ,,, R6 == PFLAG
+
+         SUBR   R4,R3        ; Check to see if we consumed 15 numbers
+         JMPNZ  R3,NFLAG     ; If not, continue
+         INCR   R5
+
+         ; STR    CFLAG++,CFLAG
+         LDRM   R14,5        ; CFLAG
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R5,R14       ; CFLAG
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB    ; Disk Access Paramater Block
+         SVC    W_DSK        ; Write Disk Sector
+
+
+
+NFLAG    ANDR   R6,R5        ; PFLAG & CFLAG
+         JMPNZ  R5,END       ; We are done
+         XORR   R1,R2        ; If I_OUT (XORR) I_IN == 0, then I_OUT == I_IN
+         JMPNZ  R2,CONSUME   ; IF I_OUT != I_IN, Continue
+         SVC    D_NOP        ; If I_OUT == I_IN, NOP
+         JMP    CONS
+CONSUME  LDRM   R1,7         ; SECTOR OF BUFFER
+         ADDR   R2,R1        ; I_IN = I_IN + I_OUT
+
+         ; LDRN   R15,R1       ; Load R15 from data segment address in R1
+         STR    R1,S_ADR    ; Sector Address w/ offset
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = Sector address + offset
+
+         SVC    W_STR
+
+         INCR   R2           ; INCR R2 twice for word
+         INCR   R2
+
+         ; STR    R2,I_OUT     ; Index Out incremented to new value
+         LDRM   R14,0        ; I_OUT
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R2,R14        ; I_OUT
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         LDRM   R13,20
+         ; If negative, then I_OUT > L_BUF. Easier than SUBR R2,R3, then
+         ; making duplicate code due to needing the same action for both
+         ; situations
+         SUBR   R3,R13        ; R2 = I_OUT - L_BUF (Checks if I_OUT > L_BUFF)
+         JMPN   R13,CONTC     ; Basically JMPGE R2,R3,CONT
+         ZEROR  R13           ; Loops I_OUT back around
+
+         ; STR    R4,I_OUT     ; Update I_OUT
+         LDRM   R14,0        ; I_OUT
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R13,R14        ; I_OUT
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+CONTC    INCR   R3
+         ; STR    R1,N_OUT
+         LDRM   R14,2        ; N_OUT
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R3,R14        ; N_OUT
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         JMP    CONS
+END      SVC    T_JOB
+
+;--------------------------------------------------
+; Thread Entry Producer
+;--------------------------------------------------
+; while(1) {
+;    while(((I_IN + 1) % L_BUF) == I_OUT) {
+;        D_NOP();
+;    }
+;    S_BUF[I_IN] = nextProduced;
+;    I_IN = (I_IN + 1) % L_BUF;
+; }
+;--------------------------------------------------
+PROD     LDRM   R1,3        ; N_IN
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = N_OUT
+         MVR    R15,R3
+
+         LDRM   R1,4        ; N_RUN
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = N_RUN
+         MVR    R15,R4
+
+         LDRM   R1,0        ; I_OUT
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = I_OUT
+         MVR    R15,R2
+
+         LDRM   R1,5        ; CFLAG
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = CFLAG
+         MVR    R15,R5
+
+         LDRM   R1,6        ; PFLAG
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = PFLAG
+         MVR    R15,R6
+
+         LDRM   R1,1        ; I_IN
+         STR    R1,S_ADR    ; Sector Address
+         LDRM   R1,D_BUF    ; Disk Buffer
+         STR    R1,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    R_DSK       ; Read Disk Sector
+         LDRM   R15,D_BUF   ; R15 = I_IN
+         MVR    R15,R1
+
+         ; R1 == I_IN ,,, R2 == I_OUT ,,, R3 == N_IN ,,, R4 == N_RUN
+         ; R5 == CFLAG ,,, R6 == PFLAG
+
+         JMPZ   R1,PRODUCE
+         SUBR   R1,R4        ; If less than or equal to 15 produced numbers
+         JMPNZ  R4,MOD       ; Continue
+         INCR   R6
+
+         ; STR    R6,PFLAG
+         LDRM   R14,6        ; PFLAG
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R6,R14        ; PFLAG
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         SVC    T_JOB        ; Else, we're done
+
+MOD      LDRM   R13,20
+         SUBR   R1,R13       ; R13 = L_BUF - I_IN (Checks if I_IN > L_BUF)
+         JMPP   R13,CONTP     ; Basically JMPG R1,R13,CONT
+         JMPZ   R13,CONTP
+         ZEROR  R1           ; Loops I_IN back around
+
+         ; STR    R1,I_IN      ; Update I_IN
+CONTP    LDRM   R14,1        ; I_IN
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R1,R14        ; I_IN
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         XORR   R1,R2        ; If I_IN+1 (XORR) I_OUT == 0, then I_IN+1 == I_OUT
+         JMPNZ  R2,PRODUCE   ; IF I_IN != I_OUT, Continue
+         SVC    D_NOP        ; If I_IN == I_OUT, NOP
+         JMP    PROD
+PRODUCE  LDRM   R14,7        ; START BUFFER
+         ADDR   R3,R14       ; BUFFER + OFFSET
+         ; STRN   R3,R2        ; Store R3 into data segment at R2
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R3,R14        ; I_IN
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         INCR   R3           ; Number++
+         ; STR    R3,V_NUM     ; Update Number
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R3,R14        ; N_IN
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+
+         INCR   R1           ; Update Index
+         INCR   R1
+         ; STR    R1,I_IN
+         STR    R14,S_ADR    ; Sector Address
+         MVR    R1,R14        ; I_IN
+         STR    R14,B_ADR    ; Buffer Address
+         LDRM   R15,D_APB   ; Disk Access Paramater Block
+         SVC    W_DSK       ; Write Disk Sector
+         JMP    PROD
+$ENDJOB
+$EOF
